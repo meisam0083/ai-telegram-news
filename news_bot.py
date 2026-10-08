@@ -2,9 +2,13 @@ import os
 import json
 import feedparser
 import requests
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHANNEL = os.environ["TELEGRAM_CHANNEL"]
+
+MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 
 RSS_FEEDS = [
     "https://techcrunch.com/feed/",
@@ -14,7 +18,6 @@ RSS_FEEDS = [
 
 SENT_FILE = "sent_articles.json"
 
-# Load previously sent articles
 try:
     with open(SENT_FILE, "r", encoding="utf-8") as f:
         sent_articles = set(json.load(f))
@@ -22,75 +25,38 @@ except:
     sent_articles = set()
 
 
-def send_to_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+print("Loading AI model...")
 
-    response = requests.post(
-        url,
-        data={
-            "chat_id": TELEGRAM_CHANNEL,
-            "text": text,
-            "disable_web_page_preview": False
-        },
-        timeout=30
-    )
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_NAME,
+    torch_dtype=torch.float32
+)
 
-    return response.ok
+print("AI model loaded.")
 
 
-# Find only ONE new article
-article_to_send = None
+def summarize_persian(title, description):
+    prompt = f"""
+این خبر تکنولوژی را به فارسی روان و کوتاه خلاصه کن.
 
-for feed_url in RSS_FEEDS:
-    feed = feedparser.parse(feed_url)
+عنوان خبر:
+{title}
 
-    for article in feed.entries:
-        title = article.get("title", "").strip()
-        link = article.get("link", "").strip()
+متن خبر:
+{description}
 
-        if not title or not link:
-            continue
+قوانین:
+- یک تیتر فارسی جذاب بنویس.
+- خلاصه بین 60 تا 100 کلمه باشد.
+- اطلاعاتی که در متن نیست اختراع نکن.
+- لحن خبری و ساده باشد.
+- خروجی فقط متن فارسی باشد.
+"""
 
-        if link in sent_articles:
-            continue
+    messages = [
+        {"role": "system", "content": "تو یک سردبیر حرفه‌ای اخبار تکنولوژی هستی."},
+        {"role": "user", "content": prompt}
+    ]
 
-        article_to_send = {
-            "title": title,
-            "link": link
-        }
-        break
-
-    if article_to_send:
-        break
-
-
-# Send only one article
-if article_to_send:
-
-    message = (
-        f"📰 {article_to_send['title']}\n\n"
-        f"🔗 {article_to_send['link']}"
-    )
-
-    if send_to_telegram(message):
-
-        sent_articles.add(article_to_send["link"])
-
-        # Keep only the latest 500 links
-        sent_articles = set(list(sent_articles)[-500:])
-
-        with open(SENT_FILE, "w", encoding="utf-8") as f:
-            json.dump(
-                list(sent_articles),
-                f,
-                ensure_ascii=False,
-                indent=2
-            )
-
-        print("✅ One new article sent.")
-
-    else:
-        print("❌ Telegram sending failed.")
-
-else:
-    print("ℹ️ No new article found.")
+    text = tokenizer
